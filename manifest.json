@@ -1,0 +1,8 @@
+{
+  "name": "Шахові задачі: мат у 5 ходів",
+  "short_name": "Шахові задачі",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "lang": "uk"
+}

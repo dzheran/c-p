@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="manifest" href="manifest.json">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Шахові задачі">
+<title>Шахові задачі</title>
+<style>
+:root{color-scheme:light dark}
+body{font:18px/1.4 system-ui,sans-serif;max-width:34rem;margin:auto;padding:.5rem}
+h1{font-size:1.2rem;margin:.3rem 0}
+#board{display:grid;grid-template-columns:repeat(8,1fr);width:100%;aspect-ratio:1;border:2px solid gray}
+#board button{margin:0;padding:0;border:0;border-radius:0;font-size:min(9vw,2.8rem);line-height:1;width:100%;height:100%}
+.l{background:#f0d9b5}.d{background:#b58863}
+.w{color:#fff;text-shadow:0 0 3px #000,0 0 3px #000}.b{color:#000}
+.sel{outline:5px solid #1e90ff;outline-offset:-5px}
+.lm{box-shadow:inset 0 0 0 100vmax rgba(255,230,0,.35)}
+#msg{min-height:3em;padding:.4rem;font-weight:600}
+[hidden]{display:none!important}
+button,input:not([type=checkbox]),select{font:inherit;padding:.7rem;width:100%;box-sizing:border-box;margin-top:.4rem}
+label{display:block;margin-top:.6rem}
+h2:focus,h1:focus{outline:none}
+details{margin-top:.6rem}
+summary{font-weight:600;padding:.7rem;border:1px solid gray;border-radius:6px}
+#log p{margin:.3rem 0;padding:.3rem;border-left:4px solid gray}
+dialog{max-width:30rem;width:90%;box-sizing:border-box;padding:1rem}
+</style>
+</head>
+<body>
+<main>
+<section id="menu">
+  <h1 id="mt" tabindex="-1">Шахові задачі</h1>
+  <button type="button" id="resume" hidden></button>
+  <label for="cat">Категорія задач</label>
+  <select id="cat"></select>
+  <button type="button" id="del" hidden>Видалити цю категорію</button>
+  <label for="rmin">Рейтинг задач від</label>
+  <input id="rmin" type="number" inputmode="numeric" value="0">
+  <label for="rmax">Рейтинг задач до</label>
+  <input id="rmax" type="number" inputmode="numeric" value="3500">
+  <label for="mode">Як робити ходи</label>
+  <select id="mode">
+    <option value="board">Торкаючись клітинок на дошці</option>
+    <option value="text">Вводячи хід текстом</option>
+  </select>
+  <p><label><input type="checkbox" id="poss" style="width:auto"> Озвучувати можливі ходи після вибору фігури</label></p>
+  <button type="button" id="go">Нова задача</button>
+  <p id="mmsg" role="status" aria-live="polite"></p>
+  <p id="off">Офлайн-режим: перевіряю…</p>
+</section>
+
+<section id="game" hidden>
+  <button type="button" id="menuBtn">Меню</button>
+  <h2 id="gt" tabindex="-1">Задача</h2>
+
+  <div id="board" role="group" aria-label="Шахівниця"></div>
+
+  <div id="promo" role="group" aria-label="Перетворення пішака" hidden>
+    <button type="button" data-p="q">Ферзь</button>
+    <button type="button" data-p="r">Тура</button>
+    <button type="button" data-p="b">Слон</button>
+    <button type="button" data-p="n">Кінь</button>
+  </div>
+
+  <div id="msg" role="status" aria-live="polite"></div>
+
+  <form id="f" hidden>
+    <label for="mv">Ввести хід текстом (e2e4 або Nf3)</label>
+    <input id="mv" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="go">
+    <button type="submit">Зробити хід</button>
+  </form>
+
+  <div class="row">
+    <button type="button" id="pos">Прочитати всю позицію</button>
+    <button type="button" id="cancel">Скасувати вибір</button>
+    <button type="button" id="hint">Підказка</button>
+    <button type="button" id="next">Наступна задача</button>
+  </div>
+
+  <details>
+    <summary>Більше</summary>
+    <button type="button" id="last">Останній хід суперника</button>
+    <button type="button" id="mine">Мої фігури</button>
+    <button type="button" id="theirs">Фігури суперника</button>
+    <button type="button" id="att">Що під ударом</button>
+    <button type="button" id="give">Здатися і показати розв'язок</button>
+    <h2>Історія повідомлень</h2>
+    <div id="log"></div>
+  </details>
+</section>
+</main>
+
+<dialog id="dlg" aria-labelledby="dt">
+  <h2 id="dt">Додати нову категорію</h2>
+  <p>Потрібен файл із розширенням .json. Це список задач: кожна задача має поля id, fen, moves (ходи у форматі e2e4) і, за бажанням, rating. Такий файл створює конвертер задач Lichess.</p>
+  <button type="button" id="pick">Додати файл</button>
+  <input type="file" id="file" accept=".json,application/json" hidden>
+  <div id="step2" hidden>
+    <label for="cname">Назва категорії</label>
+    <input id="cname" autocomplete="off" enterkeyhint="done">
+    <button type="button" id="ok">Готово</button>
+  </div>
+  <p id="dmsg" role="status" aria-live="polite"></p>
+  <button type="button" id="dcancel">Скасувати</button>
+</dialog>
+
+<script type="module">
+import { Chess } from './chess.js';
+
+const $ = id => document.getElementById(id);
+const N = { k: 'король', q: 'ферзь', r: 'тура', b: 'слон', n: 'кінь', p: 'пішак' };
+const GL = { k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟\uFE0E' };
+const ORDER = 'kqrbnp', FILES = 'abcdefgh';
+let sayDelay = 60, gcat = '5', P = [], g, pz, idx, mist, hints, hl, over, last = '', me = 'w', sel = null, promo = null;
+let solved = new Set();
+try { solved = new Set(JSON.parse(localStorage.getItem('solved') || '[]')); } catch {}
+const save = () => { try { localStorage.setItem('solved', JSON.stringify([...solved])); } catch {} };
+
+const say = t => {
+  const dl = sayDelay; sayDelay = 60;
+  $('msg').textContent = '';
+  setTimeout(() => { $('msg').textContent = t; }, dl);
+  const d = document.createElement('p');
+  d.textContent = t;
+  $('log').append(d);
+  while ($('log').children.length > 30) $('log').firstChild.remove();
+};
+
+const nm = (t, c) => (c === 'w' ? (t === 'r' ? 'біла' : 'білий') : (t === 'r' ? 'чорна' : 'чорний')) + ' ' + N[t];
+const uci = s => ({ from: s.slice(0, 2), to: s.slice(2, 4), promotion: s[4] });
+const tag = m => m.san.includes('#') ? ', мат' : m.san.includes('+') ? ', шах' : '';
+const desc = m => {
+  if (m.flags.includes('k')) return 'коротка рокіровка' + tag(m);
+  if (m.flags.includes('q')) return 'довга рокіровка' + tag(m);
+  return `${N[m.piece]} ${m.from} ${m.captured ? 'бере' : 'на'} ${m.to}` +
+    (m.promotion ? `, стає: ${N[m.promotion]}` : '') + tag(m);
+};
+
+const list = c => {
+  const a = [];
+  g.board().forEach(r => r.forEach(x => x && x.color === c && a.push(x)));
+  return a.sort((x, y) => ORDER.indexOf(x.type) - ORDER.indexOf(y.type) || x.square.localeCompare(y.square))
+    .map(x => N[x.type] + ' ' + x.square).join(', ');
+};
+
+// ---- board ----
+const btns = [];
+for (let i = 0; i < 64; i++) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.onclick = () => click(b.dataset.sq);
+  $('board').append(b);
+  btns.push(b);
+}
+
+function render() {
+  const flip = me === 'b';
+  const lm = g.history({ verbose: true }).pop();
+  const dest = {};
+  if (sel) g.moves({ square: sel, verbose: true }).forEach(m => { dest[m.to] = m; });
+  btns.forEach((b, i) => {
+    const row = i >> 3, col = i & 7;
+    const f = flip ? 7 - col : col, rk = flip ? row + 1 : 8 - row;
+    const s = FILES[f] + rk, p = g.get(s);
+    b.dataset.sq = s;
+    b.textContent = p ? GL[p.type] : '';
+    b.className = ((f + rk) % 2 ? 'd' : 'l') + (p ? ' ' + p.color : '') +
+      (s === sel ? ' sel' : '') + (lm && (s === lm.from || s === lm.to) ? ' lm' : '');
+    const m = dest[s];
+    const hint = !m ? '' : m.flags.includes('e') ? ', можна взяти пішака на проході'
+      : p ? ', можна взяти'
+      : m.flags.includes('k') || m.flags.includes('q') ? ', можна походити, рокіровка'
+      : ', можна походити';
+    b.setAttribute('aria-label', s + ', ' + (p ? nm(p.type, p.color) : 'порожньо') + (s === sel ? ', вибрано' : '') + hint);
+  });
+  sync();
+}
+
+// remember the current puzzle so the player can continue later
+function sync() {
+  try {
+    if (!pz || over) localStorage.removeItem('session');
+    else localStorage.setItem('session', JSON.stringify({ cat: gcat, pid: pz.id, idx, mist, hints, hl, rating: pz.rating }));
+  } catch {}
+}
+
+function select(s) {
+  sel = s;
+  render();
+  const p = g.get(s);
+  let t = `Вибрано ${nm(p.type, p.color)} ${s}.`;
+  if ($('poss').checked) {
+    const ms = g.moves({ square: s, verbose: true });
+    t += ms.length ? ' Можна піти: ' + ms.map(m => (m.captured ? 'бере ' : '') + m.to).join(', ') + '.' : ' Ходів немає.';
+  }
+  say(t);
+}
+
+function click(s) {
+  if (over) { say('Задачу закінчено. Натисни «Наступна задача».'); return; }
+  if (promo) { say('Спершу обери фігуру для перетворення.'); return; }
+  const p = g.get(s);
+  if (!sel) {
+    if (p && p.color === me) select(s);
+    else say(p ? 'Це фігура суперника.' : `На ${s} немає твоєї фігури.`);
+    return;
+  }
+  if (s === sel) { sel = null; render(); say('Вибір скасовано.'); return; }
+  if (p && p.color === me) { select(s); return; }
+  const ms = g.moves({ square: sel, verbose: true }).filter(m => m.to === s);
+  if (!ms.length) { say(`Хід ${N[g.get(sel).type]} ${sel} на ${s} неможливий.`); return; }
+  if (ms.length > 1) {
+    promo = { from: sel, to: s };
+    $('promo').hidden = false;
+    $('promo').querySelector('button').focus();
+    say('Обери фігуру для перетворення.');
+    return;
+  }
+  play({ from: sel, to: s });
+}
+
+document.querySelectorAll('#promo button').forEach(b => {
+  b.onclick = () => {
+    const o = { ...promo, promotion: b.dataset.p };
+    promo = null; $('promo').hidden = true;
+    play(o);
+  };
+});
+
+// ---- puzzle logic ----
+function start() {
+  let inRange = P.filter(inR);
+  if (!inRange.length) inRange = P;
+  const open = inRange.filter(p => !solved.has(p.id));
+  const pool = open.length ? open : inRange;
+  pz = pool[Math.random() * pool.length | 0];
+  g = new Chess(pz.fen);
+  idx = 0; mist = 0; hints = 0; hl = 0; over = false; sel = null; promo = null;
+  $('promo').hidden = true;
+  const m = g.move(uci(pz.moves[idx++]));
+  last = desc(m);
+  me = g.turn();
+  render();
+  say(`Нова задача${pz.rating ? ', рейтинг ' + pz.rating : ''}. ${CATS[gcat]}. Ти граєш за ${me === 'w' ? 'білих' : 'чорних'}. Суперник зіграв: ${last}.`);
+}
+
+function win(m) {
+  over = true;
+  solved.add(pz.id); save(); sync();
+  say(`${desc(m)}. Мат! Задачу розв'язано. Помилок: ${mist}, підказок: ${hints}. Розв'язано в цій категорії: ${P.filter(p => solved.has(p.id)).length} з ${P.length}.`);
+}
+
+function play(o) {
+  const m = g.move(o);   // legality is checked by chess.js
+  sel = null;
+  const u = m.from + m.to + (m.promotion || '');
+  if (u === pz.moves[idx] || g.isCheckmate()) {
+    idx++; hl = 0;
+    if (g.isCheckmate() || idx >= pz.moves.length) { render(); win(m); return; }
+    const r = g.move(uci(pz.moves[idx++]));
+    last = desc(r);
+    render();
+    say(`Вірно: ${desc(m)}. Суперник відповів: ${last}.`);
+  } else {
+    g.undo(); mist++;
+    render();
+    say(`${desc(m)} не веде до розв'язку. Хід скасовано. Помилок: ${mist}.`);
+  }
+}
+
+// typed moves, also validated by chess.js
+function parse(t) {
+  const c = /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(t) ? [uci(t.toLowerCase())] : [t, t[0].toUpperCase() + t.slice(1)];
+  for (const x of c) {
+    try {
+      const m = g.move(x); g.undo();
+      if (m.color !== me) continue;
+      return { from: m.from, to: m.to, promotion: m.promotion };
+    } catch {}
+  }
+  return null;
+}
+
+$('f').onsubmit = e => {
+  e.preventDefault();
+  const t = $('mv').value.trim();
+  $('mv').value = '';
+  if (!t) return;
+  if (over) { say('Задачу закінчено. Натисни «Наступна задача».'); return; }
+  const o = parse(t);
+  if (!o) {
+    const lc = t.toLowerCase();
+    if (/^[a-h][1-8][a-h][1-8]$/.test(lc) && g.moves({ square: lc.slice(0, 2), verbose: true }).some(m => m.to === lc.slice(2) && m.promotion)) {
+      say('Це перетворення пішака. Додай в кінці літеру фігури: q ферзь, r тура, b слон, n кінь. Наприклад e7e8q.');
+    } else say(`Такий хід неможливий: ${t}.`);
+    return;
+  }
+  promo = null; $('promo').hidden = true;
+  play(o);
+};
+
+$('last').onclick = () => say('Останній хід суперника: ' + last + '.');
+$('cancel').onclick = () => {
+  sel = null; promo = null; $('promo').hidden = true; render(); say('Вибір скасовано.');
+};
+$('pos').onclick = () => say(`Білі: ${list('w')}. Чорні: ${list('b')}.`);
+$('mine').onclick = () => say('Мої фігури: ' + list(me) + '.');
+$('theirs').onclick = () => say('Фігури суперника: ' + list(me === 'w' ? 'b' : 'w') + '.');
+
+$('hint').onclick = () => {
+  if (over) return;
+  const e = pz.moves[idx], p = g.get(e.slice(0, 2));
+  hints++; hl++; sync();
+  say(hl === 1
+    ? `Підказка: ходить ${N[p.type]} з ${e.slice(0, 2)}.`
+    : `Підказка: ${N[p.type]} з ${e.slice(0, 2)} на ${e.slice(2, 4)}.`);
+};
+
+$('give').onclick = () => {
+  if (over) return;
+  const c = new Chess(g.fen()), out = [];
+  for (let i = idx; i < pz.moves.length; i++) {
+    out.push((i % 2 === idx % 2 ? 'ти: ' : 'суперник: ') + desc(c.move(uci(pz.moves[i]))));
+  }
+  over = true; sync();
+  say('Розв\'язок: ' + out.join('; ') + '.');
+};
+
+const inR = p => p.rating >= (+$('rmin').value || 0) && p.rating <= (+$('rmax').value || 9999);
+try {
+  const r = JSON.parse(localStorage.getItem('range') || 'null');
+  if (r) { $('rmin').value = r[0]; $('rmax').value = r[1]; }
+} catch {}
+$('rmin').onchange = $('rmax').onchange = () => {
+  try { localStorage.setItem('range', JSON.stringify([$('rmin').value, $('rmax').value])); } catch {}
+  info();
+};
+
+$('att').onclick = () => {
+  const opp = me === 'w' ? 'b' : 'w', mine = [], hit = [];
+  g.board().forEach(r => r.forEach(x => {
+    if (!x) return;
+    if (x.color === me && g.isAttacked(x.square, opp)) mine.push(x);
+    if (x.color === opp && g.isAttacked(x.square, me)) hit.push(x);
+  }));
+  const f = a => a.sort((x, y) => ORDER.indexOf(x.type) - ORDER.indexOf(y.type) || x.square.localeCompare(y.square))
+    .map(x => N[x.type] + ' ' + x.square).join(', ');
+  say((g.inCheck() && g.turn() === me ? 'Твій король під шахом. ' : '') +
+    (mine.length ? 'Під ударом суперника: ' + f(mine) + '. ' : 'Твої фігури не під ударом. ') +
+    (hit.length ? 'Ти атакуєш: ' + f(hit) + '.' : 'Ти не атакуєш жодної фігури суперника.'));
+};
+
+$('next').onclick = start;
+
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js')
+    .then(() => navigator.serviceWorker.ready)
+    .then(async () => {
+      let n = 0;
+      for (const k of [2, 3, 4, 5]) if (await caches.match(`mate${k}.json`)) n++;
+      $('off').textContent = `Офлайн-режим: готовий. Збережено категорій: ${n} з 4.`;
+    })
+    .catch(() => { $('off').textContent = 'Офлайн-режим: недоступний.'; });
+} else {
+  $('off').textContent = 'Офлайн-режим: недоступний у цьому браузері.';
+}
+
+try { $('poss').checked = localStorage.getItem('poss') === '1'; } catch {}
+$('poss').onchange = () => { try { localStorage.setItem('poss', $('poss').checked ? '1' : '0'); } catch {} };
+
+const BASE = { 2: 'Мат у 2 ходи', 3: 'Мат у 3 ходи', 4: 'Мат у 4 ходи', 5: 'Мат у 5 ходів' };
+const CATS = { ...BASE };
+
+// ---- custom categories: list in localStorage, puzzles in IndexedDB ----
+const customs = () => { try { return JSON.parse(localStorage.getItem('customCats') || '[]'); } catch { return []; } };
+const saveCustoms = a => { try { localStorage.setItem('customCats', JSON.stringify(a)); } catch {} };
+customs().forEach(c => { CATS['c:' + c.id] = c.name; });
+
+const idb = (mode, fn) => new Promise((res, rej) => {
+  const o = indexedDB.open('puzzles', 1);
+  o.onupgradeneeded = () => o.result.createObjectStore('cats');
+  o.onerror = () => rej(o.error);
+  o.onsuccess = () => {
+    const d = o.result, t = d.transaction('cats', mode);
+    const rq = fn(t.objectStore('cats'));
+    t.oncomplete = () => { res(rq.result); d.close(); };
+    t.onerror = t.onabort = () => rej(t.error);
+  };
+});
+
+let cat = '5';
+try { cat = localStorage.getItem('cat') || '5'; } catch {}
+if (!CATS[cat]) cat = '5';
+const setCat = c => { cat = c; try { localStorage.setItem('cat', cat); } catch {} };
+const msay = t => { $('mmsg').textContent = ''; setTimeout(() => { $('mmsg').textContent = t; }, 60); };
+
+function buildCat() {
+  const s = $('cat');
+  s.innerHTML = '';
+  for (const k in CATS) s.add(new Option(CATS[k], k));
+  s.add(new Option('Додати нову категорію…', 'add'));
+  s.value = cat;
+  $('del').hidden = !cat.startsWith('c:');
+}
+buildCat();
+
+function norm(d) {
+  if (!Array.isArray(d) || !d.length) throw new Error('У файлі має бути непорожній список задач.');
+  const out = [];
+  d.forEach((p, i) => {
+    if (p && typeof p.fen === 'string' && Array.isArray(p.moves) && p.moves.length >= 2)
+      out.push({ id: String(p.id ?? 'p' + i), fen: p.fen, moves: p.moves, rating: +p.rating || 0 });
+  });
+  if (!out.length) throw new Error('Не знайшов жодної задачі з полями fen і moves.');
+  try {
+    for (const p of out.slice(0, 20)) new Chess(p.fen).move(uci(p.moves[0]));
+  } catch { throw new Error('Файл не схожий на шахові задачі: позиції або ходи некоректні.'); }
+  return out;
+}
+
+const cache = {};
+async function getCat(n) {
+  if (cache[n]) return cache[n];
+  const d = n.startsWith('c:')
+    ? await idb('readonly', s => s.get(n.slice(2)))
+    : await (await fetch(`mate${n}.json`)).json();
+  if (!Array.isArray(d)) throw 0;
+  return (cache[n] = d);
+}
+
+async function info() {
+  try {
+    const d = await getCat(cat);
+    msay(`${CATS[cat]}: у діапазоні рейтингу ${d.filter(inR).length} задач із ${d.length}. Розв'язано: ${d.filter(p => solved.has(p.id)).length}.`);
+  } catch { msay('Не вдалося прочитати категорію.'); }
+}
+
+// ---- screens ----
+function applyMode() {
+  const text = $('mode').value === 'text';
+  $('board').hidden = text;
+  $('cancel').hidden = text;
+  $('f').hidden = !text;
+  if (text) { sel = null; promo = null; $('promo').hidden = true; }
+}
+
+function refreshResume() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem('session') || 'null'); } catch {}
+  const ok = s && CATS[s.cat];
+  $('resume').hidden = !ok;
+  if (ok) $('resume').textContent = `Продовжити задачу: ${CATS[s.cat]}${s.rating ? ', рейтинг ' + s.rating : ''}`;
+}
+
+function show(w) {
+  $('menu').hidden = w !== 'menu';
+  $('game').hidden = w !== 'game';
+  if (w === 'menu') { refreshResume(); $('mt').focus(); }
+  else { applyMode(); $('gt').focus(); }
+  window.scrollTo(0, 0);
+}
+
+$('menuBtn').onclick = () => show('menu');
+
+$('go').onclick = async () => {
+  let d;
+  try { d = await getCat(cat); }
+  catch {
+    msay(cat.startsWith('c:') ? `Не вдалося відкрити категорію «${CATS[cat]}».`
+      : `Не вдалося завантажити mate${cat}.json. Перевір, що файл лежить поруч з index.html.`);
+    return;
+  }
+  if (!d.some(inR)) { msay('У вибраному діапазоні рейтингу задач немає. Зміни діапазон.'); return; }
+  P = d; gcat = cat;
+  sayDelay = 600;
+  show('game');
+  start();
+};
+
+$('resume').onclick = async () => {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem('session') || 'null'); } catch {}
+  if (!s || !CATS[s.cat]) { refreshResume(); return; }
+  try {
+    const d = await getCat(s.cat);
+    const p = d.find(x => x.id === s.pid);
+    if (!p || !Number.isInteger(s.idx) || s.idx < 1 || s.idx >= p.moves.length) throw 0;
+    const c = new Chess(p.fen);
+    let color = null, lastDesc = '';
+    for (let i = 0; i < s.idx; i++) {
+      const m = c.move(uci(p.moves[i]));
+      if (i === 0) color = c.turn();
+      if (i % 2 === 0) lastDesc = desc(m);
+    }
+    P = d; gcat = s.cat; pz = p; g = c; idx = s.idx;
+    mist = s.mist || 0; hints = s.hints || 0; hl = s.hl || 0;
+    over = false; sel = null; promo = null; me = color; last = lastDesc;
+    $('promo').hidden = true;
+    sayDelay = 600;
+    show('game');
+    render();
+    say(`Продовжуємо задачу. ${CATS[gcat]}${p.rating ? ', рейтинг ' + p.rating : ''}. Ти граєш за ${me === 'w' ? 'білих' : 'чорних'}. Суперник зіграв: ${last}. Помилок: ${mist}.`);
+  } catch {
+    try { localStorage.removeItem('session'); } catch {}
+    refreshResume();
+    msay('Не вдалося продовжити задачу. Почни нову.');
+  }
+};
+
+$('cat').onchange = () => {
+  if ($('cat').value === 'add') { openAdd(); return; }
+  setCat($('cat').value);
+  $('del').hidden = !cat.startsWith('c:');
+  info();
+};
+
+try { $('mode').value = localStorage.getItem('mode') || 'board'; } catch {}
+$('mode').onchange = () => { try { localStorage.setItem('mode', $('mode').value); } catch {} };
+
+// ---- add-category dialog ----
+let pending = null;
+const dsay = t => { $('dmsg').textContent = ''; setTimeout(() => { $('dmsg').textContent = t; }, 60); };
+
+function openAdd() {
+  pending = null;
+  $('step2').hidden = true;
+  $('dmsg').textContent = '';
+  $('cname').value = '';
+  $('file').value = '';
+  $('dlg').showModal();
+  $('pick').focus();
+}
+$('dlg').onclose = () => { $('cat').value = cat; pending = null; };
+$('dcancel').onclick = () => $('dlg').close();
+$('pick').onclick = () => $('file').click();
+
+$('file').onchange = async () => {
+  const f = $('file').files[0];
+  if (!f) return;
+  try {
+    let d;
+    try { d = JSON.parse(await f.text()); } catch { throw new Error('Це не файл .json або він пошкоджений.'); }
+    pending = norm(d);
+  } catch (e) {
+    pending = null;
+    $('step2').hidden = true;
+    dsay(e.message + ' Обери інший файл.');
+    return;
+  }
+  $('cname').value = f.name.replace(/\.[^.]*$/, '');
+  $('step2').hidden = false;
+  $('cname').focus();
+  dsay(`Файл прочитано, задач: ${pending.length}. Введи назву категорії і натисни «Готово».`);
+};
+
+$('ok').onclick = async () => {
+  const name = $('cname').value.trim();
+  if (!pending) return;
+  if (!name) { dsay('Введи назву категорії.'); $('cname').focus(); return; }
+  const id = Date.now().toString(36), data = pending;
+  try { await idb('readwrite', s => s.put(data, id)); }
+  catch { dsay('Не вдалося зберегти файл у пам\'яті браузера.'); return; }
+  const m = customs(); m.push({ id, name }); saveCustoms(m);
+  CATS['c:' + id] = name;
+  cache['c:' + id] = data;
+  setCat('c:' + id);
+  pending = null;
+  $('dlg').close();
+  buildCat();
+  msay(`Категорію «${name}» додано, задач: ${data.length}. Вона вибрана.`);
+};
+
+$('del').onclick = async () => {
+  if (!cat.startsWith('c:')) return;
+  const name = CATS[cat], key = cat, id = cat.slice(2);
+  if (!confirm(`Видалити категорію «${name}»?`)) return;
+  try { await idb('readwrite', s => s.delete(id)); } catch {}
+  saveCustoms(customs().filter(c => c.id !== id));
+  delete CATS[key]; delete cache[key];
+  setCat('5');
+  buildCat();
+  refreshResume();
+  msay(`Категорію «${name}» видалено.`);
+  $('cat').focus();
+};
+
+refreshResume();
+</script>
+</body>
+</html>
